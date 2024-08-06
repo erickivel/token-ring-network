@@ -133,8 +133,6 @@ class Game:
             for i in range(self.number_players_alive())
         ]
 
-        print("HADNS:", hands)
-
         return hands
 
     def finish_round(self):
@@ -415,8 +413,6 @@ class Game:
                 self.players_alive[i] = 0
 
         lives_encoded = ",".join([str(life) for life in self.players_lives])
-
-        # self.print_curr_lives(self.players_lives)
 
         show_results_message = self.encode_message(
             self.player_id,
