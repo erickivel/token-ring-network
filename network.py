@@ -20,6 +20,10 @@ class Network:
         self.next_player_ip = next_player_ip
 
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+        # Broadcast message
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+
         self.sock.bind((self.player_ip, self.player_port))
 
     def next_port(self, current_port):
