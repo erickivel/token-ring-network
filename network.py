@@ -27,9 +27,12 @@ class Network:
 
     def send_message(self, message):
         if self.has_token:
-            self.sock.sendto(
-                message.encode(), (self.next_player_ip, self.next_player_port)
-            )
+            try:
+                self.sock.sendto(
+                    message.encode(), (self.next_player_ip, self.next_player_port)
+                )
+            except Exception as e:
+                print("Error when sending message:", e)
             self.has_token = 0
         else:
             print("The player does not have the token to send the message")
