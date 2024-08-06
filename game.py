@@ -8,7 +8,7 @@ SUITS = ["Hearts", "Diamonds", "Clubs", "Spades"]
 RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"]
 
 
-# Its value must be one character
+# Value must be one character
 class Actions(Enum):
     NEW_DEALER = 0
     INFO_NEW_DEALER = 1
@@ -199,53 +199,47 @@ class Game:
 
         self.print_hand()
 
+    def register_bets(self, encoded_bets):
+        raw_bets = encoded_bets.split(",")
+
+        for raw_bet in raw_bets:
+            player_id, bet = str(raw_bet).split("-")
+            self.players_bets[int(player_id) - 1] = int(bet)
+
     def handle_ask_bet(self, decoded_message):
         raw_bets = decoded_message["data"].split(",")
 
         data_to_send = ""
 
-        # ======================================
-
-        # card protocol - PLAYER_ID-RANK-SUIT
-        if len(raw_cards) > 0 and len(raw_cards[0]) > 0:
+        # bet protocol - PLAYER_ID-BET
+        if len(raw_bets) > 0 and len(raw_bets[0]) > 0:
             print("=============================")
-            print("Cards already played:")
-            for card in raw_cards:
-                player_id, rank, suit = str(card).split("-")
+            print("Bets already played:")
+            for raw_bet in raw_bets:
+                player_id, bet = str(raw_bet).split("-")
                 print(
-                    f"Player {player_id} played: ",
-                    Card(int(rank), int(suit)).to_string(),
+                    f"Player {player_id} bet: {bet}",
                 )
             print("=============================")
-            selected_card = self.select_card()
-            data_to_send = f"{decoded_message['data']},{str(self.player_id)}-{selected_card.encode()}"
+            selected_bet = self.place_bet()
+            data_to_send = (
+                f"{decoded_message['data']},{str(self.player_id)}-{str(selected_bet)}"
+            )
         else:
-            selected_card = self.select_card()
-            data_to_send = f"{str(self.player_id)}-{selected_card.encode()}"
+            selected_bet = self.place_bet()
+            data_to_send = f"{str(self.player_id)}-{str(selected_bet)}"
 
-        # if self.is_dealer():
-        #     self.players_round_cards[self.player_id - 1] = selected_card
+        if self.is_dealer():
+            self.register_bets(data_to_send)
+            return
 
         message = self.encode_message(
             self.player_id,
             self.next_player_id,
-            Actions.ASK_CARD,
+            Actions.ASK_BET,
             data_to_send,
         )
 
-        self.network.send_message(message)
-
-        # ======================================
-
-        bet = int(input("Place your bet - how many rounds are you going to win?\n"))
-        while bet < 0 or bet > CARDS_PER_HAND:
-            bet = int(input("Place your bet - how many rounds are you going to win?\n"))
-        message = self.encode_message(
-            self.player_id,
-            self.dealer_id,
-            Actions.PLACE_BET,
-            bet,
-        )
         self.network.send_message(message)
 
     def handle_show_bet(self, decoded_message):
@@ -270,6 +264,13 @@ class Game:
         print("Card selected:", card.to_string())
 
         return card
+
+    def place_bet(self):
+        bet = int(input("Place your bet - how many rounds are you going to win?\n"))
+        while bet < 0 or bet > CARDS_PER_HAND:
+            bet = int(input("Place your bet - how many rounds are you going to win?\n"))
+
+        return bet
 
     def handle_ask_card(self, decoded_message):
         raw_cards = decoded_message["data"].split(",")
@@ -309,9 +310,6 @@ class Game:
         else:
             selected_card = self.select_card()
             data_to_send = f"{str(self.player_id)}-{selected_card.encode()}"
-
-        # if self.is_dealer():
-        #     self.players_round_cards[self.player_id - 1] = selected_card
 
         message = self.encode_message(
             self.player_id,
@@ -439,37 +437,18 @@ class Game:
                 # Ask bets
                 message = self.encode_message(
                     self.player_id,
-                    self.next_player,
+                    self.next_player_id,
                     Actions.ASK_BET,
                     "",
                 )
                 self.network.send_message(message)
                 decoded_message = self.receive_decoded_message()
 
-                self.handle_ask_bet(decoded_message)
-
-                # if message["action"] == Actions.PLACE_BET:
-                #     self.players_bets[int(message["from_player_id"]) - 1] = int(
-                #         message["data"]
-                #     )
-
-                # # Place dealer's bet
-                # if (
-                #     message["to_player_id"] == self.player_id
-                #     and message["action"] == Actions.ASK_BET
-                # ):
-                #     bet = int(
-                #         input(
-                #             "Insira a sua aposta - Quantas rodadas você vai ganhar?\n"
-                #         )
-                #     )
-                #     while bet < 0 or bet > NUM_PLAYERS:
-                #         bet = int(
-                #             input(
-                #                 "Insira a sua aposta - Quantas rodadas você vai ganhar?\n"
-                #             )
-                #         )
-                #     self.players_bets[int(self.player_id) - 1] = bet
+                if decoded_message["action"] == Actions.ASK_BET:
+                    self.handle_ask_bet(decoded_message)
+                else:
+                    print("Game flow was broken")
+                    exit(1)
 
                 # Show bets
                 message = self.encode_message(
@@ -482,7 +461,11 @@ class Game:
 
                 decoded_message = self.receive_decoded_message()
 
-                self.handle_show_bet(decoded_message)
+                if decoded_message["action"] == Actions.SHOW_BETS:
+                    self.handle_show_bet(decoded_message)
+                else:
+                    print("Game flow was broken")
+                    exit(1)
 
                 self.ask_card_action(self.next_player_id)
 
@@ -510,7 +493,7 @@ class Game:
                             self.handle_deal_cards(decoded_message)
 
                         case Actions.ASK_BET:
-                            self.handle_ask_bet()
+                            self.handle_ask_bet(decoded_message)
                             continue
 
                         case Actions.SHOW_BETS:
