@@ -5,8 +5,8 @@ from settings import BASE_PORT, BUFFER_SIZE, NUM_PLAYERS
 
 class Network:
     sock: socket.socket = {}
-    player_port = 9500
-    next_player_port = 9501
+    player_port = 8000
+    next_player_port = 8001
     player_ip = ""
     next_player_ip = ""
 
