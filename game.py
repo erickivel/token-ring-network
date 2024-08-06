@@ -2,10 +2,22 @@ import random
 from enum import Enum
 
 from network import NUM_PLAYERS, Network
-from settings import CARDS_PER_HAND
+from settings import CARDS_PER_HAND, NUM_LIVES
 
 SUITS = ["Hearts", "Diamonds", "Clubs", "Spades"]
 RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"]
+
+
+class bcolors:
+    HEADER = "\033[95m"
+    BLUE = "\033[94m"
+    OKCYAN = "\033[96m"
+    GREEN = "\033[92m"
+    WARNING = "\033[93m"
+    RED = "\033[91m"
+    ENDC = "\033[0m"
+    BOLD = "\033[1m"
+    UNDERLINE = "\033[4m"
 
 
 # Value must be one character
@@ -14,7 +26,7 @@ class Actions(Enum):
     INFO_NEW_DEALER = 1
     DEAL_CARDS = 2
     ASK_BET = 3
-    PLACE_BET = 4
+    WINNER = 4
     SHOW_BETS = 5
     ASK_CARD = 6
     RETURN_CARDS = 7
@@ -44,13 +56,15 @@ class Game:
     player_id = 0
     next_player_id = 0
     dealer_id = 1
+    is_alive = 1
     player_hand = []
 
     # Game states
     curr_round = 1
     last_win_player_id = 0
     deck = []
-    players_points = [0] * NUM_PLAYERS
+    players_alive = [1] * NUM_PLAYERS  # 1 if it is alive, 0 otherwise
+    players_lives = [NUM_LIVES] * NUM_PLAYERS
     players_bets = [0] * NUM_PLAYERS
     players_round_cards = [Card(0, 0)] * NUM_PLAYERS
     players_wins = [0] * NUM_PLAYERS
@@ -103,14 +117,23 @@ class Game:
         )
         self.network.send_message(encoded_message)
 
+    def number_players_alive(self):
+        alive = 0
+        for i in self.players_alive:
+            if i == 1:
+                alive += 1
+        return alive
+
     def split_cards(self):
         self.assemble_deck()
         random.shuffle(self.deck)
 
         hands = [
             self.deck[i * CARDS_PER_HAND : (i + 1) * CARDS_PER_HAND]
-            for i in range(NUM_PLAYERS)
+            for i in range(self.number_players_alive())
         ]
+
+        print("HADNS:", hands)
 
         return hands
 
@@ -165,11 +188,7 @@ class Game:
         self.players_round_cards = [Card(0, 0)] * NUM_PLAYERS
         self.players_wins = [0] * NUM_PLAYERS
 
-    def handle_new_dealer(self, decoded_message):
-        self.players_points = [
-            int(point) for point in decoded_message["data"].split(",")
-        ]
-
+    def handle_new_dealer(self):
         self.dealer_id = self.player_id
 
         self.reset_states()
@@ -214,7 +233,7 @@ class Game:
         # bet protocol - PLAYER_ID-BET
         if len(raw_bets) > 0 and len(raw_bets[0]) > 0:
             print("=============================")
-            print("Bets already played:")
+            print("Bets already placed:")
             for raw_bet in raw_bets:
                 player_id, bet = str(raw_bet).split("-")
                 print(
@@ -243,9 +262,15 @@ class Game:
         self.network.send_message(message)
 
     def handle_show_bet(self, decoded_message):
+        bets = [int(bet) for bet in eval(decoded_message["data"])]
+
         print("=============================")
         print("BETS:")
-        print(decoded_message["data"])
+        for i, bet in enumerate(bets):
+            if self.players_alive[i]:
+                print(
+                    f"Player {i + 1} bet: {bet}",
+                )
         print("=============================")
 
         # Pass Message to next
@@ -278,7 +303,7 @@ class Game:
         data_to_send = ""
 
         # All Cards Played - send to dealer
-        if len(raw_cards) == NUM_PLAYERS:
+        if len(raw_cards) == self.number_players_alive():
             if not self.is_dealer():
                 message = self.encode_message(
                     self.player_id,
@@ -308,6 +333,8 @@ class Game:
             selected_card = self.select_card()
             data_to_send = f"{decoded_message['data']},{str(self.player_id)}-{selected_card.encode()}"
         else:
+            if len(self.player_hand) != CARDS_PER_HAND:
+                print(bcolors.GREEN + "You won last round!" + bcolors.ENDC)
             selected_card = self.select_card()
             data_to_send = f"{str(self.player_id)}-{selected_card.encode()}"
 
@@ -329,7 +356,7 @@ class Game:
         )
         self.network.send_message(message)
 
-    def new_dealer_action(self, encoded_points):
+    def new_dealer_action(self, encoded_lives):
         to_player_id = self.next_player_id
 
         self.dealer_id = to_player_id
@@ -338,7 +365,7 @@ class Game:
             self.player_id,
             to_player_id,
             Actions.NEW_DEALER,
-            encoded_points,
+            encoded_lives,
         )
         self.network.send_message(message)
 
@@ -359,16 +386,15 @@ class Game:
         print("=============================")
         print("Number of wins:")
         for i, win in enumerate(wins):
-            print(f"Player {i + 1} has {win} wins")
+            if self.players_alive[i]:
+                print(f"Player {i + 1} has {win} wins")
         print("=============================")
 
-    def print_curr_points(self, encoded_points):
-        points = encoded_points.split(",")
-
+    def print_curr_lives(self, lives):
         print("=============================")
-        print("Points:")
-        for i, point in enumerate(points):
-            print(f"Player {i + 1} has {point} points")
+        print("Lives:")
+        for i, life in enumerate(lives):
+            print(f"Player {i + 1} has {life} lives")
         print("=============================")
 
     def handle_show_round_result(self, decoded_message):
@@ -379,38 +405,79 @@ class Game:
 
     def finish_great_round(self):
         # Decrease lives
-        smallest_diff = 10000
-        smallest_diff_player_ids = []
+
         for i in range(NUM_PLAYERS):
             diff = abs(self.players_bets[i] - self.players_wins[i])
-            if diff < smallest_diff:
-                smallest_diff_player_ids = []
-                smallest_diff_player_ids.append(i + 1)
-                smallest_diff = diff
-            elif diff == smallest_diff:
-                smallest_diff_player_ids.append(i + 1)
+            self.players_lives[i] -= diff
 
-        for player_id in smallest_diff_player_ids:
-            self.players_points[player_id - 1] += 1
+        for i, life in enumerate(self.players_lives):
+            if life <= 0:
+                self.players_alive[i] = 0
 
-        points_encoded = ",".join([str(point) for point in self.players_points])
+        lives_encoded = ",".join([str(life) for life in self.players_lives])
 
-        self.print_curr_points(points_encoded)
+        # self.print_curr_lives(self.players_lives)
 
         show_results_message = self.encode_message(
             self.player_id,
             self.next_player_id,
             Actions.SHOW_RESULTS,
-            points_encoded,
+            lives_encoded,
         )
         self.network.send_message(show_results_message)
 
+    def won_game(self, winner_player):
+        winner_message = self.encode_message(
+            self.player_id,
+            self.next_player_id,
+            Actions.WINNER,
+            str(winner_player),
+        )
+        self.network.send_message(winner_message)
+
+    def verify_winners(self):
+        num_alive = self.number_players_alive()
+
+        if num_alive <= 1:
+            greater_life_player = self.players_lives.index(max(self.players_lives)) + 1
+            self.won_game(greater_life_player)
+            return True
+        elif num_alive > 1:
+            return False
+
     def handle_show_results(self, decoded_message):
-        self.print_curr_points(decoded_message["data"])
+        self.players_lives = [int(life) for life in decoded_message["data"].split(",")]
+
+        for i, life in enumerate(self.players_lives):
+            if life <= 0:
+                self.players_alive[i] = 0
+
+        lives = decoded_message["data"].split(",")
+
+        self.print_curr_lives(self.players_lives)
+
+        player_life = int(lives[self.player_id - 1])
+        print("Player life", player_life)
+        if player_life <= 0:
+            print(bcolors.RED + "You died :(\n" + bcolors.ENDC)
+            self.is_alive = 0
 
         # Pass Message to next
         decoded_message["from_player_id"] = self.player_id
         decoded_message["to_player_id"] = self.next_player_id
+
+    def handle_winner(self, decoded_message):
+        winner = int(decoded_message["data"])
+
+        if winner == self.player_id:
+            print(bcolors.GREEN + "You won!" + bcolors.ENDC)
+        else:
+            print(bcolors.RED + f"Player {winner} won!" + bcolors.ENDC)
+
+        # Pass Message to next
+        decoded_message["from_player_id"] = self.player_id
+        decoded_message["to_player_id"] = self.next_player_id
+        self.pass_message(decoded_message)
 
     def start(self):
         net = self.network
@@ -419,10 +486,20 @@ class Game:
                 print("===========YOU ARE THE DEALER===========")
                 hands = self.split_cards()
 
-                for i, hand in enumerate(hands):
+                print("Players alive:", self.players_alive)
+                last_to_player_id = self.player_id
+                for hand in hands:
+                    to_player_id = self.next_player(last_to_player_id)
+                    # To player is not alive
+                    while not self.players_alive[to_player_id - 1]:
+                        to_player_id = self.next_player(to_player_id)
+
+                    last_to_player_id = to_player_id
+                    print("MAPOOOOOOO:", last_to_player_id)
+
                     message = self.encode_message(
                         self.player_id,
-                        self.next_player(self.player_id + i),
+                        to_player_id,
                         Actions.DEAL_CARDS,
                         hand,
                     )
@@ -432,6 +509,7 @@ class Game:
                         message["to_player_id"] == self.player_id
                         and message["action"] == Actions.DEAL_CARDS
                     ):
+                        print("IS to me to receive cards")
                         self.handle_deal_cards(message)
 
                 # Ask bets
@@ -474,14 +552,16 @@ class Game:
                 decoded_message = self.receive_decoded_message()
                 action = decoded_message["action"]
 
-                if decoded_message["to_player_id"] == self.player_id:
+                if (
+                    decoded_message["to_player_id"] == self.player_id and self.is_alive
+                ) or action == Actions.WINNER:
                     # print(
                     #     f"Player on port {self.network.player_port} received: {decoded_message}"
                     # )
 
                     match action:
                         case Actions.NEW_DEALER:
-                            self.handle_new_dealer(decoded_message)
+                            self.handle_new_dealer()
                             continue
                         case Actions.INFO_NEW_DEALER:
                             if not self.is_dealer():
@@ -512,7 +592,6 @@ class Game:
                                 continue
 
                         case Actions.SHOW_ROUND_RESULT:
-                            print(f"======== Round {self.curr_round} ========")
                             if not self.is_dealer():
                                 self.handle_show_round_result(decoded_message)
                             else:
@@ -525,12 +604,24 @@ class Game:
                                 continue
 
                         case Actions.SHOW_RESULTS:
-                            if not self.is_dealer():
-                                self.handle_show_results(decoded_message)
-                            else:
+                            self.handle_show_results(decoded_message)
+                            if self.is_dealer():
+                                # else:
+                                if self.verify_winners():
+                                    continue
+
                                 self.new_dealer_action(decoded_message["data"])
                                 continue
+                        case Actions.WINNER:
+                            self.handle_winner(decoded_message)
+                            exit(0)
+
                         case _:
                             print("Message with unknown action")
                             exit(1)
+                elif (
+                    not self.is_alive
+                    and decoded_message["to_player_id"] == self.player_id
+                ):
+                    decoded_message["to_player_id"] = self.next_player_id
                 self.pass_message(decoded_message)
