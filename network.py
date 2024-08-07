@@ -5,8 +5,8 @@ from settings import BASE_PORT, BUFFER_SIZE, NUM_PLAYERS
 
 class Network:
     sock: socket.socket = {}
-    player_port = 8000
-    next_player_port = 8001
+    player_port = 7420
+    next_player_port = 7420
     player_ip = ""
     next_player_ip = ""
 
@@ -31,12 +31,9 @@ class Network:
 
     def send_message(self, message):
         if self.has_token:
-            try:
-                self.sock.sendto(
-                    message.encode(), (self.next_player_ip, self.next_player_port)
-                )
-            except Exception as e:
-                print("Error when sending message:", e)
+            self.sock.sendto(
+                message.encode(), (self.next_player_ip, self.next_player_port)
+            )
             self.has_token = 0
         else:
             print("The player does not have the token to send the message")

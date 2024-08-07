@@ -8,16 +8,14 @@ SUITS = ["Hearts", "Diamonds", "Clubs", "Spades"]
 RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"]
 
 
-class bcolors:
-    HEADER = "\033[95m"
-    BLUE = "\033[94m"
-    OKCYAN = "\033[96m"
+class PrintColors:
+    PURPLE = "\033[94m"
+    CYAN = "\033[96m"
     GREEN = "\033[92m"
-    WARNING = "\033[93m"
+    ORANGE = "\033[93m"
     RED = "\033[91m"
-    ENDC = "\033[0m"
     BOLD = "\033[1m"
-    UNDERLINE = "\033[4m"
+    ENDC = "\033[0m"
 
 
 # Value must be one character
@@ -52,14 +50,14 @@ class Card:
 class Game:
     network: Network = {}
 
-    # Players states
+    # Player states
     player_id = 0
     next_player_id = 0
     dealer_id = 1
     is_alive = 1
     player_hand = []
 
-    # Game states
+    # Game states - Dealer
     curr_round = 1
     last_win_player_id = 0
     deck = []
@@ -77,10 +75,7 @@ class Game:
         if player_id == self.dealer_id:
             self.network.has_token = 1
 
-    def assemble_deck(self):
-        for rank in range(len(RANKS)):
-            for suit in range(len(SUITS)):
-                self.deck.append(Card(rank, suit).encode())
+    ########################### UTILS ###########################
 
     def is_dealer(self):
         return self.dealer_id == self.player_id
@@ -90,10 +85,6 @@ class Game:
 
     def encode_message(self, from_player_id, to_player_id, action, data):
         return str(from_player_id) + str(to_player_id) + str(action.value) + str(data)
-
-    def receive_decoded_message(self):
-        network_message = self.network.receive_message()
-        return self.decode_message(network_message)
 
     def decode_message(self, message):
         from_player_id = int(message[0])
@@ -107,6 +98,10 @@ class Game:
             "action": action,
             "data": data,
         }
+
+    def receive_decoded_message(self):
+        network_message = self.network.receive_message()
+        return self.decode_message(network_message)
 
     def pass_message(self, decoded_message):
         encoded_message = self.encode_message(
@@ -124,6 +119,92 @@ class Game:
                 alive += 1
         return alive
 
+    def print_purple(self, string):
+        print(PrintColors.PURPLE + string + PrintColors.ENDC)
+
+    def print_blue(self, string):
+        print(PrintColors.CYAN + string + PrintColors.ENDC)
+
+    def print_green(self, string):
+        print(PrintColors.GREEN + string + PrintColors.ENDC)
+
+    def print_red(self, string):
+        print(PrintColors.RED + string + PrintColors.ENDC)
+
+    def print_orange(self, string):
+        print(PrintColors.ORANGE + string + PrintColors.ENDC)
+
+    def print_bold(self, string):
+        print(PrintColors.BOLD + string + PrintColors.ENDC)
+
+    def print_hand(self):
+        self.print_bold("=============================")
+        self.print_bold("Your hand:")
+        for i, card in enumerate(self.player_hand):
+            self.print_bold(f"{i+1} - {card.to_string()}")
+        self.print_bold("=============================")
+
+    def print_curr_wins(self, encoded_wins):
+        wins = encoded_wins.split(",")
+
+        self.print_blue("=============================")
+        self.print_blue("Number of wins:")
+        for i, win in enumerate(wins):
+            if self.players_alive[i]:
+                self.print_blue(f"Player {i + 1} has {win} wins")
+        self.print_blue("=============================")
+
+    def print_curr_lives(self, lives):
+        self.print_purple("=============================")
+        self.print_purple("Lives:")
+        for i, life in enumerate(lives):
+            self.print_purple(f"Player {i + 1} has {life} lives")
+        self.print_purple("=============================")
+
+    def reset_states(self):
+        # Reset states
+        self.player_hand = []
+        self.curr_round = 1
+        self.last_win_player_id = 0
+        self.deck = []
+        self.players_bets = [0] * NUM_PLAYERS
+        self.players_round_cards = [Card(0, 0)] * NUM_PLAYERS
+        self.players_wins = [0] * NUM_PLAYERS
+
+    def place_bet(self):
+        bet = int(input("Place your bet - how many rounds are you going to win?\n"))
+        while bet < 0 or bet > CARDS_PER_HAND:
+            bet = int(input("Place your bet - how many rounds are you going to win?\n"))
+
+        return bet
+
+    def register_bets(self, encoded_bets):
+        raw_bets = encoded_bets.split(",")
+
+        for raw_bet in raw_bets:
+            player_id, bet = str(raw_bet).split("-")
+            self.players_bets[int(player_id) - 1] = int(bet)
+
+    def select_card(self):
+        self.print_hand()
+
+        card_index = int(input("\nPlay your card: \n")) - 1
+
+        while card_index < 0 or card_index > len(self.player_hand) - 1:
+            card_index = int(input("\nPlay your card: \n")) - 1
+
+        card = self.player_hand.pop(card_index)
+        print("Card selected:", card.to_string())
+
+        return card
+
+    ####################### UTILS - ADMIN #######################
+
+    def assemble_deck(self):
+        for rank in range(len(RANKS)):
+            for suit in range(len(SUITS)):
+                self.deck.append(Card(rank, suit).encode())
+
     def split_cards(self):
         self.assemble_deck()
         random.shuffle(self.deck)
@@ -136,7 +217,6 @@ class Game:
         return hands
 
     def finish_round(self):
-        # Parse dict
         parsed_round_cards = []
 
         for i, card in enumerate(self.players_round_cards):
@@ -169,22 +249,59 @@ class Game:
         )
         self.network.send_message(show_round_results_message)
 
-    def print_hand(self):
-        print("=============================")
-        print("Your hand:")
-        for i, card in enumerate(self.player_hand):
-            print(f"{i+1} - {card.to_string()}")
-        print("=============================")
+    def finish_great_round(self):
+        # Decrease lives
+        for i in range(NUM_PLAYERS):
+            diff = abs(self.players_bets[i] - self.players_wins[i])
+            self.players_lives[i] -= diff
 
-    def reset_states(self):
-        # Reset states
-        self.player_hand = []
-        self.curr_round = 1
-        self.last_win_player_id = 0
-        self.deck = []
-        self.players_bets = [0] * NUM_PLAYERS
-        self.players_round_cards = [Card(0, 0)] * NUM_PLAYERS
-        self.players_wins = [0] * NUM_PLAYERS
+        for i, life in enumerate(self.players_lives):
+            if life <= 0:
+                self.players_alive[i] = 0
+
+        lives_encoded = ",".join([str(life) for life in self.players_lives])
+
+        show_results_message = self.encode_message(
+            self.player_id,
+            self.next_player_id,
+            Actions.SHOW_RESULTS,
+            lives_encoded,
+        )
+        self.network.send_message(show_results_message)
+
+    def won_game(self, winner_player):
+        winner_message = self.encode_message(
+            self.player_id,
+            self.next_player_id,
+            Actions.WINNER,
+            str(winner_player),
+        )
+        self.network.send_message(winner_message)
+
+    def verify_winners(self):
+        num_alive = self.number_players_alive()
+
+        if num_alive <= 1:
+            greater_life_player = self.players_lives.index(max(self.players_lives)) + 1
+            self.won_game(greater_life_player)
+            return True
+        elif num_alive > 1:
+            return False
+
+    def new_dealer_action(self, encoded_lives):
+        to_player_id = self.next_player_id
+
+        self.dealer_id = to_player_id
+
+        message = self.encode_message(
+            self.player_id,
+            to_player_id,
+            Actions.NEW_DEALER,
+            encoded_lives,
+        )
+        self.network.send_message(message)
+
+    ######################### ACTIONS HANDLERS #########################
 
     def handle_new_dealer(self):
         self.dealer_id = self.player_id
@@ -215,13 +332,6 @@ class Game:
             self.player_hand.append(created_card)
 
         self.print_hand()
-
-    def register_bets(self, encoded_bets):
-        raw_bets = encoded_bets.split(",")
-
-        for raw_bet in raw_bets:
-            player_id, bet = str(raw_bet).split("-")
-            self.players_bets[int(player_id) - 1] = int(bet)
 
     def handle_ask_bet(self, decoded_message):
         raw_bets = decoded_message["data"].split(",")
@@ -259,7 +369,7 @@ class Game:
 
         self.network.send_message(message)
 
-    def handle_show_bet(self, decoded_message):
+    def handle_show_bets(self, decoded_message):
         bets = [int(bet) for bet in eval(decoded_message["data"])]
 
         print("=============================")
@@ -274,26 +384,6 @@ class Game:
         # Pass Message to next
         decoded_message["from_player_id"] = self.player_id
         decoded_message["to_player_id"] = self.next_player_id
-
-    def select_card(self):
-        self.print_hand()
-
-        card_index = int(input("\nPlay your card: \n")) - 1
-
-        while card_index < 0 or card_index > len(self.player_hand) - 1:
-            card_index = int(input("\nPlay your card: \n")) - 1
-
-        card = self.player_hand.pop(card_index)
-        print("Card selected:", card.to_string())
-
-        return card
-
-    def place_bet(self):
-        bet = int(input("Place your bet - how many rounds are you going to win?\n"))
-        while bet < 0 or bet > CARDS_PER_HAND:
-            bet = int(input("Place your bet - how many rounds are you going to win?\n"))
-
-        return bet
 
     def handle_ask_card(self, decoded_message):
         raw_cards = decoded_message["data"].split(",")
@@ -332,7 +422,7 @@ class Game:
             data_to_send = f"{decoded_message['data']},{str(self.player_id)}-{selected_card.encode()}"
         else:
             if len(self.player_hand) != CARDS_PER_HAND:
-                print(bcolors.GREEN + "You won last round!" + bcolors.ENDC)
+                self.print_green("You won last round!")
             selected_card = self.select_card()
             data_to_send = f"{str(self.player_id)}-{selected_card.encode()}"
 
@@ -354,20 +444,6 @@ class Game:
         )
         self.network.send_message(message)
 
-    def new_dealer_action(self, encoded_lives):
-        to_player_id = self.next_player_id
-
-        self.dealer_id = to_player_id
-
-        message = self.encode_message(
-            self.player_id,
-            to_player_id,
-            Actions.NEW_DEALER,
-            encoded_lives,
-        )
-        self.network.send_message(message)
-
-    # Only the dealer will do this action
     def handle_return_cards(self, decoded_message):
         raw_cards = decoded_message["data"].split(",")
 
@@ -378,68 +454,11 @@ class Game:
 
         self.finish_round()
 
-    def print_curr_wins(self, encoded_wins):
-        wins = encoded_wins.split(",")
-
-        print("=============================")
-        print("Number of wins:")
-        for i, win in enumerate(wins):
-            if self.players_alive[i]:
-                print(f"Player {i + 1} has {win} wins")
-        print("=============================")
-
-    def print_curr_lives(self, lives):
-        print("=============================")
-        print("Lives:")
-        for i, life in enumerate(lives):
-            print(f"Player {i + 1} has {life} lives")
-        print("=============================")
-
     def handle_show_round_result(self, decoded_message):
         self.print_curr_wins(decoded_message["data"])
 
         # Pass Message to next
         decoded_message["to_player_id"] = self.next_player_id
-
-    def finish_great_round(self):
-        # Decrease lives
-
-        for i in range(NUM_PLAYERS):
-            diff = abs(self.players_bets[i] - self.players_wins[i])
-            self.players_lives[i] -= diff
-
-        for i, life in enumerate(self.players_lives):
-            if life <= 0:
-                self.players_alive[i] = 0
-
-        lives_encoded = ",".join([str(life) for life in self.players_lives])
-
-        show_results_message = self.encode_message(
-            self.player_id,
-            self.next_player_id,
-            Actions.SHOW_RESULTS,
-            lives_encoded,
-        )
-        self.network.send_message(show_results_message)
-
-    def won_game(self, winner_player):
-        winner_message = self.encode_message(
-            self.player_id,
-            self.next_player_id,
-            Actions.WINNER,
-            str(winner_player),
-        )
-        self.network.send_message(winner_message)
-
-    def verify_winners(self):
-        num_alive = self.number_players_alive()
-
-        if num_alive <= 1:
-            greater_life_player = self.players_lives.index(max(self.players_lives)) + 1
-            self.won_game(greater_life_player)
-            return True
-        elif num_alive > 1:
-            return False
 
     def handle_show_results(self, decoded_message):
         self.players_lives = [int(life) for life in decoded_message["data"].split(",")]
@@ -453,9 +472,8 @@ class Game:
         self.print_curr_lives(self.players_lives)
 
         player_life = int(lives[self.player_id - 1])
-        print("Player life", player_life)
         if player_life <= 0:
-            print(bcolors.RED + "You died :(\n" + bcolors.ENDC)
+            self.print_red("You died :(\n")
             self.is_alive = 0
 
         # Pass Message to next
@@ -466,23 +484,25 @@ class Game:
         winner = int(decoded_message["data"])
 
         if winner == self.player_id:
-            print(bcolors.GREEN + "You won!" + bcolors.ENDC)
+            self.print_green("You won! :)")
         else:
-            print(bcolors.RED + f"Player {winner} won!" + bcolors.ENDC)
+            self.print_red(f"Player {winner} won!")
 
         # Pass Message to next
         decoded_message["from_player_id"] = self.player_id
         decoded_message["to_player_id"] = self.next_player_id
         self.pass_message(decoded_message)
 
+    ####################### START GAME #######################
+
     def start(self):
         net = self.network
         while True:
             if self.is_dealer():
-                print("===========YOU ARE THE DEALER===========")
+                self.print_orange("===========YOU ARE THE DEALER===========")
                 hands = self.split_cards()
 
-                print("Players alive:", self.players_alive)
+                # Deal Cards
                 last_to_player_id = self.player_id
                 for hand in hands:
                     to_player_id = self.next_player(last_to_player_id)
@@ -491,7 +511,6 @@ class Game:
                         to_player_id = self.next_player(to_player_id)
 
                     last_to_player_id = to_player_id
-                    print("MAPOOOOOOO:", last_to_player_id)
 
                     message = self.encode_message(
                         self.player_id,
@@ -505,7 +524,6 @@ class Game:
                         message["to_player_id"] == self.player_id
                         and message["action"] == Actions.DEAL_CARDS
                     ):
-                        print("IS to me to receive cards")
                         self.handle_deal_cards(message)
 
                 # Ask bets
@@ -536,7 +554,7 @@ class Game:
                 decoded_message = self.receive_decoded_message()
 
                 if decoded_message["action"] == Actions.SHOW_BETS:
-                    self.handle_show_bet(decoded_message)
+                    self.handle_show_bets(decoded_message)
                 else:
                     print("Game flow was broken")
                     exit(1)
@@ -574,7 +592,7 @@ class Game:
 
                         case Actions.SHOW_BETS:
                             if not self.is_dealer():
-                                self.handle_show_bet(decoded_message)
+                                self.handle_show_bets(decoded_message)
                             else:
                                 continue
 
@@ -602,7 +620,6 @@ class Game:
                         case Actions.SHOW_RESULTS:
                             self.handle_show_results(decoded_message)
                             if self.is_dealer():
-                                # else:
                                 if self.verify_winners():
                                     continue
 
